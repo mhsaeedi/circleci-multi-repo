@@ -1,0 +1,21 @@
+version: '3.9'
+
+services:
+    orchestrator:
+        build:
+            dockerfile: orchestrator/Dockerfile
+            context: .
+        ports:
+            - "8080:8080"
+        network_mode: host
+        command:
+            - abc
+    batch-processor:
+        build:
+            dockerfile: batch-processor/Dockerfile
+            context: .
+        ports:
+            - "8081:8081"
+        network_mode: host
+        command:
+            - abc

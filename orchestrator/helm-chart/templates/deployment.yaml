@@ -1,0 +1,111 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "orchestrator.fullname" . }}
+  labels:
+    {{- include "orchestrator.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "orchestrator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "orchestrator.selectorLabels" . | nindent 8 }}
+    spec:
+    {{- if .Values.datadogAgent.enabled  }}
+      shareProcessNamespace: true
+    {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "orchestrator.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            {{- toYaml .Values.deployment.env | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.deployment.healthPath }}
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 10
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.deployment.healthPath }}
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+        {{- if .Values.persistence.enabled }}
+          {{- toYaml .Values.persistence.volumeMounts | nindent 12 }}
+        {{- end }}
+
+        {{- if .Values.datadogAgent.enabled  }}
+        - image: datadog/agent
+          imagePullPolicy: IfNotPresent
+          name: datadog-agent
+          ports:
+            - containerPort: 8125
+              name: dogstatsdport
+              protocol: UDP
+            - containerPort: 8126
+              name: traceport
+              protocol: TCP
+          env:
+          - name: DD_API_KEY
+            value: {{ .Values.datadogAgent.DD_API_KEY }}
+          - name: DD_SITE
+            value: "datadoghq.eu"
+          - name: DD_EKS_FARGATE
+            value: "true"
+          - name: DD_APM_ENABLED
+            value: "true"
+          - name: DD_TAGS
+            value: {{ .Values.datadogAgent.DD_TAGS }}
+          - name: DD_KUBERNETES_KUBELET_NODENAME
+            valueFrom:
+              fieldRef:
+                apiVersion: v1
+                fieldPath: spec.nodeName
+          resources:
+            {{- toYaml .Values.datadogAgent.resources | nindent 12 }}
+        {{- end }}
+
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- if .Values.persistence.enabled }}
+      {{- toYaml .Values.persistence.volumes | nindent 12 }}
+    {{- end }}
+

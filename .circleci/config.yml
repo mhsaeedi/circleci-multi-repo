@@ -1,0 +1,20 @@
+#
+# DevOps Pipeline Definition for cloud-indexation modules
+# MAINTAINER @msaeedi
+# Here we detect what modules has changed, this information will be used in next step: continue_config.yml
+#
+
+version: 2.1
+setup: true
+orbs:
+    path-filtering: circleci/path-filtering@0.0.3
+workflows:
+    setup:
+        jobs:
+            - path-filtering/filter:
+                  base-revision: master
+                  mapping: |
+                      shared-resources/.* shared-resources-modified true
+                      batch-processor/.* batch-processor-modified true
+                      orchestrator/.* orchestrator-modified true
+                      frontend/.* frontend-modified true

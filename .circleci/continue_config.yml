@@ -1,0 +1,306 @@
+#
+# Definition of devops pipe line for all modules come here
+#
+
+version: 2.1 # Circleci version
+orbs:
+    ecr: circleci/aws-ecr@7.2.0
+    eks: circleci/aws-eks@1.0.3
+    aws-cli: circleci/aws-cli@1.4.1
+    helm: circleci/helm@1.2.0
+    kubernetes: circleci/kubernetes@0.12.0
+    aws-s3: circleci/aws-s3@3.0.0
+
+# ******************************************************************************************************
+# Parameters coming from config.yml
+# ******************************************************************************************************
+parameters:
+    batch-processor-modified: # Passes from previous step
+        type: boolean
+        default: false
+    orchestrator-modified: # Passes from previous step
+        type: boolean
+        default: false
+    shared-resources-modified: # Passes from previous step
+        type: boolean
+        default: false
+    frontend-modified: # Passes from previous step
+      type: boolean
+      default: false
+# ******************************************************************************************************
+# Shared job for:
+# 1. Building images
+# 2. Push images to AWS ECR repository
+# 3. Deploy lambda function code
+# ******************************************************************************************************
+jobs:
+    #START_PUSH2ECR_JOB
+    PUSH2ECR:
+        parameters:
+            component:
+                type: string
+            ecr-account-url:
+                type: env_var_name
+            account-id:
+                type: integer
+        environment:
+            COMPONENT: << parameters.component >>
+            ECR_ACCOUNT: << parameters.account-id >>.dkr.ecr.eu-central-1.amazonaws.com
+        docker:
+            -   image: cimg/openjdk:11.0.12
+        steps:
+            - setup_remote_docker
+            - checkout
+            -   run: docker build -f $COMPONENT/Dockerfile -t $ECR_ACCOUNT/rabbits-$COMPONENT-ecr-repo:$CIRCLE_SHA1 .
+            -   ecr/ecr-login:
+                    account-url: << parameters.ecr-account-url >>
+                    aws-access-key-id: AWS_ACCESS_KEY
+                    aws-secret-access-key: AWS_SECRET_KEY
+            -   ecr/push-image:
+                    account-url: << parameters.ecr-account-url >>
+                    repo: rabbits-<< parameters.component >>-ecr-repo
+                    tag: $CIRCLE_SHA1
+    #END_PUSH2ECR_JOB
+    # START DEPLOY2EKS JOB
+    DEPLOY2EKS:
+        parameters:
+            release-name:
+                type: string
+            kubernetes-namespace:
+                type: string
+                default: "rabbits"
+            deploy-environment:
+                type: string
+                default: development
+            deployment-role:
+                type: string
+            ecr-account-url:
+                type: string
+            ecr-repo:
+                type: string
+        environment:
+            AWS_DEFAULT_REGION: eu-central-1
+        docker:
+            -   image: cimg/base:stable
+        steps:
+            - aws-cli/install
+            -   aws-cli/setup:
+                    profile-name: eks-deployment
+                    aws-access-key-id: AWS_ACCESS_KEY
+                    aws-secret-access-key: AWS_SECRET_KEY
+                    role-arn: <<parameters.deployment-role>>
+            -   run: aws configure set source_profile eks-deployment --profile=eks-deployment
+            - kubernetes/install-kubectl
+            - eks/install-aws-iam-authenticator
+            -   eks/update-kubeconfig-with-authenticator:
+                    cluster-name: eks_<<parameters.deploy-environment>>
+                    aws-region: eu-central-1
+                    aws-profile: eks-deployment
+                    cluster-context-alias: eks
+            -   run: kubectl config current-context eks
+            - checkout
+            -   helm/install-helm-client:
+                    version: v3.5.1
+            -   run: |
+                    if helm list -n <<parameters.kubernetes-namespace>> | grep -q <<parameters.release-name>>;then
+                      helm upgrade -n <<parameters.kubernetes-namespace>> \
+                      -f ./<<parameters.release-name>>/helm-chart/values.yaml \
+                      -f ./<<parameters.release-name>>/helm-chart/<<parameters.deploy-environment>>.yaml \
+                      --set image.tag=$CIRCLE_SHA1 \
+                      --timeout 10m \
+                      <<parameters.release-name>> ./<<parameters.release-name>>/helm-chart
+                    else
+                      helm install -n <<parameters.kubernetes-namespace>> \
+                      -f ./<<parameters.release-name>>/helm-chart/values.yaml \
+                      -f ./<<parameters.release-name>>/helm-chart/<<parameters.deploy-environment>>.yaml \
+                      --set image.tag=$CIRCLE_SHA1 \
+                      --timeout 10m \
+                      <<parameters.release-name>> ./<<parameters.release-name>>/helm-chart
+                    fi
+    # END DEPLOY2EKS JOB
+
+    # Deploy2-CodeArtifact
+    Deploy2-CodeArtifact:
+        parameters:
+            component:
+                type: string
+            role_arn:
+                default: arn:aws:iam::153679301900:role/AdminImageRole
+                type: string
+            domain_name:
+                default: msaeedi-aws
+                type: string
+        docker:
+            -   image: cimg/openjdk:11.0
+        environment:
+            AWS_DEFAULT_REGION: eu-central-1
+        steps:
+            # Checkout the code as the first step.
+            - checkout
+            -   aws-cli/setup:
+                    aws-access-key-id: AWS_ACCESS_KEY
+                    aws-secret-access-key: AWS_SECRET_KEY
+            -   run:
+                    name: setup awsume
+                    command: |
+                        sudo apt update
+                        sudo apt install python3-pip
+                        pip3 install awsume
+            -   run:
+                    working_directory: ~/project/<< parameters.component >>
+                    name: deploy credentials provider
+                    command: |
+                        source awsume --role-arn << parameters.role_arn >> --region eu-central-1 --source-profile default
+                        export CODEARTIFACT_AUTH_TOKEN=`aws codeartifact get-authorization-token --domain << parameters.domain_name >>  --domain-owner 153679301900 --query authorizationToken --output text`
+                        mvn -B verify deploy --settings ../settings.xml
+
+
+      #START_PUSH2S3_JOB
+        PUSH2-S3:
+          parameters:
+            component:
+              type: string
+            profile:
+              type: string
+              default: dev
+            account-id:
+              type: integer
+              default: 218167503594
+            ecr-account:
+              type: env_var_name
+              default: AWS_ECR_ACCOUNT_URL_DEV
+          environment:
+            COMPONENT: << parameters.component >>
+            ECR_ACCOUNT: << parameters.account-id >>.dkr.ecr.eu-central-1.amazonaws.com
+          docker:
+            - image: cimg/node:16.8.0
+          steps:
+            - checkout
+            - run:
+                working_directory: ~/project/frontend
+                name: frontend
+                command: |
+                  npm i && npm run build
+            - aws-s3/sync:
+                aws-access-key-id: AWS_ACCESS_KEY
+                aws-secret-access-key: AWS_SECRET_KEY
+                arguments: |
+                  --acl public-read \
+                  --cache-control "max-age=86400"
+                from: frontend/build
+                to: 's3://indexation-frontend-test'
+            - aws-s3/copy:
+                arguments: '--dryrun'
+                from: frontend/build
+                to: 's3://indexation-frontend-test'
+
+          # your commands come here
+
+    #END_PUSH2S3_JOB
+
+# ******************************************************************************************************
+# Workflow of all modules come here
+# ******************************************************************************************************
+# How it works?
+# If a tag with format x.x.x pushes to origin, always build, push and deploy to PROD
+# If origin master has changed, build, push and deploy to DEV
+workflows:
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # BATCH_PROCESSOR ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # DEV ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    batch-processor-dev:
+        when: << pipeline.parameters.batch-processor-modified >>
+        jobs:
+            -   PUSH2ECR:
+                    context: aws-infra-env
+                    component: batch-processor
+                    account-id: 3213131
+                    ecr-account-url: AWS_ECR_ACCOUNT_URL_DEV
+                    filters:
+                        branches:
+                            only: # e.g. feature/DEV-123 or bugfix/DEV-123 or DEV-123
+                              - /^master.*/
+    # PROD ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    batch-processor-prod:
+        jobs:
+            -   PUSH2ECR:
+                    context: aws-infra-env
+                    component: batch-processor
+                    account-id: 123123123
+                    ecr-account-url: AWS_ECR_ACCOUNT_URL_PROD
+                    filters:
+                        branches:
+                            only:  /^release\/batch-processor\/(\d+\.)(\d+\.)(\*|\d+)$/  # e.g. release/batch-processor/1.0.0
+
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # ORCHESTRATOR +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # DEV ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    orchestrator-dev:
+        when: << pipeline.parameters.orchestrator-modified >>
+        jobs:
+            -   PUSH2ECR:
+                    context: aws-infra-env
+                    component: orchestrator
+                    account-id: 3123131
+                    ecr-account-url: AWS_ECR_ACCOUNT_URL_DEV
+                    filters:
+                        branches:
+                            only: # e.g. feature/DEV-123 or bugfix/DEV-123 or DEV-123
+                                - /^(feature|bugfix)\/DEV-\d+.*/
+                                - /^DEV-\d+.*/
+            -   DEPLOY2EKS:
+                    context: aws-infra-env
+                    ecr-account-url: "218167503594.dkr.ecr.eu-central-1.amazonaws.com"
+                    deployment-role: "arn:aws:iam::218167503594:role/EnvironmentInfrastructureDeploymentRole"
+                    release-name: "orchestrator"
+                    ecr-repo: "rabbits-orchestrator-ecr-repo"
+                    deploy-environment: development
+                    requires:
+                        - PUSH2ECR
+                    filters:
+                        branches:
+                            only: # e.g. feature/DEV-123 or bugfix/DEV-123 or DEV-123
+                                - /^(feature|bugfix)\/DEV-\d+.*/
+                                - /^DEV-\d+.*/
+                                - /^master.*/
+    # PROD ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    orchestrator-prod:
+        jobs:
+            -   PUSH2ECR:
+                    context: aws-infra-env
+                    component: orchestrator
+                    account-id: 123123123
+                    ecr-account-url: AWS_ECR_ACCOUNT_URL_PROD
+                    filters:
+                        branches:
+                            only:  /^release\/orchestrator\/(\d+\.)(\d+\.)(\*|\d+)$/  # e.g. release/orchestrator/1.0.0
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # SHARED-RESOURCES ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # DEV ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    shared-resources-dev:
+        when: << pipeline.parameters.shared-resources-modified >>
+        jobs:
+            -   Deploy2-CodeArtifact:
+                    component: shared-resources
+                    context: aws-infra-env
+                    filters:
+                        branches:
+                            only: # e.g. feature/DEV-123 or bugfix/DEV-123 or DEV-123
+                                - /^(feature|bugfix)\/DEV-\d+.*/
+                                - /^DEV-\d+.*/
+
+    #FRONTEND_DEV ++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+      frontend-dev:
+        when: << pipeline.parameters.frontend-modified >>
+        jobs:
+          - PUSH2-S3:
+              context: aws-infra-env
+              component: frontend
+              filters:
+                branches:
+                  only: # e.g. feature/DEV-123 or bugfix/DEV-123 or DEV-123
+                    - /^(feature|bugfix)\/DEV-\d+.*/
+                    - /^DEV-\d+.*/

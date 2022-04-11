@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<groupId>com.msaeedi.cloud.indexation</groupId>
+	<artifactId>shared-resources</artifactId>
+	<version>0.0.1</version>
+	<name>shared-resources</name>
+	<description>shared-resources</description>
+	<packaging>jar</packaging>
+
+	<distributionManagement>
+		<repository>
+			<id>msaeedi-aws-architecture-repo</id>
+			<name>msaeedi-aws-architecture-repo</name>
+			<url>https://msaeedi-aws-153679301900.d.codeartifact.eu-central-1.amazonaws.com/maven/lz-central/</url>
+		</repository>
+		<snapshotRepository>
+			<id>msaeedi-aws-architecture-repo</id>
+			<name>msaeedi-aws-architecture-repo</name>
+			<url>https://msaeedi-aws-153679301900.d.codeartifact.eu-central-1.amazonaws.com/maven/lz-central/</url>
+		</snapshotRepository>
+	</distributionManagement>
+
+</project>

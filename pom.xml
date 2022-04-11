@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<project xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd"
+         xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+	<modelVersion>4.0.0</modelVersion>
+	<groupId>com.msaeedi.cloud.indexation</groupId>
+	<artifactId>cloud-indexation</artifactId>
+	<version>1.0.0-SNAPSHOT</version>
+	<packaging>pom</packaging>
+	<description>
+		This pom file is only generated for versioning and listing modules and must not be used for maven builds.
+		All modules have to be completely independent from this parent, which means no components may inherit or use properties of this pom
+	</description>
+
+	<modules>
+		<module>batch-processor</module>
+		<module>orchestrator</module>
+		<module>shared-resources</module>
+	</modules>
+
+</project>
